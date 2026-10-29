@@ -1,0 +1,61 @@
+#   Copyright (C) 2025 John Törnblom
+#   Copyright (C) 2026 ItsJokerZz
+#
+# This file is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; see the file COPYING. If not see
+# <http://www.gnu.org/licenses/>.
+
+PS5_HOST ?= ps5
+PS5_PORT ?= 9020
+
+ifdef PS5_PAYLOAD_SDK
+    include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
+else
+    $(error PS5_PAYLOAD_SDK is undefined)
+endif
+
+ELF := $(BUILD)/elfldr-ps5.elf
+
+CFLAGS := -Wall -Werror -O1
+LDADD  := -lSceSsl -lSceHttp
+
+all: $(ELF)
+
+$(BUILD)/elfldr.o: ps5/elfldr.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/elfldr_shared.o: shared/elfldr.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/bootstrap.o: ps5/bootstrap.c $(BUILD)/socksrv.elf
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/main.o: ps5/main.c $(BUILD)/bootstrap.elf
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/bootstrap.elf: $(addprefix $(BUILD)/,bootstrap.o elfldr.o elfldr_shared.o notify.o) $(PTRACE)
+	$(CC) -o $@ $^
+	$(STRIP) $@
+
+$(BUILD)/socksrv.elf: $(addprefix $(BUILD)/,socksrv.o selfldr.o elfldr.o elfldr_shared.o notify.o uri.o) $(PTRACE)
+	$(CC) -o $@ $^ $(LDADD)
+	$(STRIP) $@
+
+$(ELF): $(addprefix $(BUILD)/,main.o elfldr.o elfldr_shared.o notify.o) $(PTRACE)
+	$(CC) -o $@ $^
+	$(STRIP) $@
+
+test: $(ELF)
+	$(PS5_DEPLOY) -h $(PS5_HOST) -p $(PS5_PORT) $^
+
+.INTERMEDIATE: $(BUILD)/socksrv.elf $(BUILD)/bootstrap.elf

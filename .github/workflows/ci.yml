@@ -1,0 +1,107 @@
+#   Copyright (C) 2025 John Törnblom
+#   Copyright (C) 2026 ItsJokerZz
+#
+# This file is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; see the file COPYING. If not see
+# <http://www.gnu.org/licenses/>.
+
+name: CI
+
+on:
+  push:
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - console: ps4
+            sdk_var: PS4_PAYLOAD_SDK
+            files: |
+              build/ps4/elfldr-ps4.elf
+              build/ps4/elfldr-ps4.bin
+          - console: ps5
+            sdk_var: PS5_PAYLOAD_SDK
+            files: build/ps5/elfldr-ps5.elf
+    steps:
+
+    - name: Checkout SDK
+      uses: actions/checkout@v4
+      with:
+        repository: ItsJokerZz/ps-payload-sdk
+        path: sdk
+
+    - name: Install prerequisites
+      run: |
+        sudo apt update
+        sudo apt install wget
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 23
+        sudo apt install llvm-23 llvm-23-dev lld-23
+
+    - name: Build SDK
+      working-directory: sdk
+      run: |
+        make ${{ matrix.console }} install DESTDIR=${{ runner.tool_cache }}/${{ matrix.console }}-payload-sdk
+        echo ${{ matrix.sdk_var }}=${{ runner.tool_cache }}/${{ matrix.console }}-payload-sdk >> $GITHUB_ENV
+
+    - name: Checkout Payload
+      uses: actions/checkout@v4
+
+    - name: Build Payload
+      run: |
+        make ${{ matrix.console }} clean all
+
+    - name: Upload Payload
+      uses: actions/upload-artifact@v4
+      with:
+        name: Payload-${{ matrix.console }}
+        path: ${{ matrix.files }}
+        if-no-files-found: error
+
+  release:
+    needs: build
+    permissions:
+      contents: write
+
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Payload-*
+          merge-multiple: true
+          path: release
+
+      - name: Create GitHub Release (pre-release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          prerelease: true
+          files: release/*
